@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Carta | Vera Pizza</title>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+<style>
+*{
+  margin:0;
+  padding:0;
+  box-sizing:border-box;
+  font-family:'Segoe UI',sans-serif
+}
+
+body{
+  background:#fafafa
+}
+
+.panel{
+  max-width:430px;
+  margin:0 auto;
+  min-height:100vh;
+  background:#fafafa;
+  display:flex;
+  flex-direction:column
+}
+
+/* HEADER */
+.panel-header{
+  position:sticky;
+  top:0;
+  z-index:60;
+  background:#111;
+  color:#fff;
+  padding:18px;
+  display:flex;
+  justify-content:center;
+  align-items:center
+}
+
+.panel-header h2{
+  font-weight:500
+}
+
+/* PROMOS */
+.promos-section{
+  padding:16px 16px 4px
+}
+
+.promos-title{
+  margin-bottom:12px;
+  font-size:18px;
+  font-weight:600
+}
+
+.promos-container{
+  display:flex;
+  gap:14px;
+  overflow-x:auto;
+  padding-bottom:6px
+}
+
+.promos-container::-webkit-scrollbar{display:none}
+
+.promo-card{
+  min-width:260px;
+  background:#fff;
+  border-radius:16px;
+  box-shadow:0 6px 18px rgba(0,0,0,.08);
+  overflow:hidden;
+  flex-shrink:0
+}
+
+.promo-card img{
+  width:100%;
+  height:140px;
+  object-fit:cover
+}
+
+.promo-info{
+  padding:12px
+}
+
+.promo-info h4{
+  font-size:16px;
+  margin-bottom:6px
+}
+
+.promo-info p{
+  font-size:14px;
+  color:#555;
+  margin-bottom:8px
+}
+
+.promo-price{
+  font-weight:700
+}
+
+/* CATEGORÍAS */
+.categories{
+  position:sticky;
+  top:62px;
+  z-index:50;
+  display:flex;
+  gap:10px;
+  padding:15px;
+  background:#fafafa;
+  overflow-x:auto
+}
+
+.categories::-webkit-scrollbar{display:none}
+
+.cat{
+  padding:8px 16px;
+  background:#eee;
+  border-radius:20px;
+  font-size:14px;
+  cursor:pointer;
+  white-space:nowrap;
+  transition:.2s
+}
+
+.cat.active{
+  background:#111;
+  color:#fff
+}
+
+/* LISTA */
+.list{
+  padding:15px
+}
+
+/* CARD */
+.card{
+  background:#fff;
+  border-radius:16px;
+  padding:12px;
+  display:flex;
+  gap:12px;
+  box-shadow:0 8px 20px rgba(0,0,0,.08);
+  margin-bottom:14px;
+  animation:fade .25s ease
+}
+
+@keyframes fade{
+  from{opacity:0;transform:translateY(6px)}
+  to{opacity:1;transform:none}
+}
+
+.card img{
+  width:80px;
+  height:80px;
+  border-radius:12px;
+  object-fit:cover
+}
+
+.card h3{
+  font-size:15px;
+  margin-bottom:4px
+}
+
+.card p{
+  font-size:13px;
+  color:#555
+}
+
+.price{
+  margin-top:6px;
+  font-weight:700
+}
+
+/* LOADER */
+.loader{
+  position:fixed;
+  inset:0;
+  background:rgba(250,250,250,.95);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  flex-direction:column;
+  z-index:200
+}
+
+.spinner{
+  width:36px;
+  height:36px;
+  border:3px solid #ddd;
+  border-top:3px solid #111;
+  border-radius:50%;
+  animation:spin 1s linear infinite
+}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+
+<body>
+
+<div class="panel">
+
+  <div class="panel-header">
+    <h2>La Vera Pizza</h2>
+  </div>
+
+  <!-- PROMOS -->
+  <section class="promos-section">
+    <div class="promos-title">🔥 Promos destacadas</div>
+    <div class="promos-container" id="promosContainer"></div>
+  </section>
+
+  <!-- CATEGORÍAS -->
+  <div class="categories" id="categories"></div>
+
+  <!-- PRODUCTOS -->
+  <div class="list" id="products"></div>
+
+</div>
+
+<div class="loader" id="loader">
+  <div class="spinner"></div>
+  <p>Cargando carta…</p>
+</div>
+
+<script>
+firebase.initializeApp({
+  apiKey:"AIzaSyCzMNKimcw1kaaJlMdTKj7RAdlsHyaImBk",
+  authDomain:"vera-pizza-app.firebaseapp.com",
+  projectId:"vera-pizza-app"
+});
+
+const db = firebase.firestore();
+const categoriesDiv = document.getElementById("categories");
+const productsDiv = document.getElementById("products");
+const promosContainer = document.getElementById("promosContainer");
+const promosSection = document.querySelector(".promos-section");
+const loader = document.getElementById("loader");
+
+let currentCategory = "";
+let firstLoad = true;
+let productCache = [];
+
+/* NORMALIZE */
+const normalize = t =>
+  t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
+
+/* PRICE FORMAT */
+const price = p => "$" + p.toLocaleString("es-AR");
+
+/* ================= PROMOS ================= */
+function loadPromos(){
+  promosContainer.innerHTML = "";
+
+  db.collection("promociones").get().then(snap=>{
+    if(snap.empty){
+      promosSection.style.display = "none";
+      return;
+    }
+
+    let hasPromos = false;
+
+    snap.forEach(doc=>{
+      const p = doc.data();
+      if(!p.activo) return;
+
+      hasPromos = true;
+
+      const card = document.createElement("div");
+      card.className = "promo-card";
+      card.innerHTML = `
+        <img src="${p.imgURL}">
+        <div class="promo-info">
+          <h4>${p.nombre}</h4>
+          <p>${p.descripcion || ""}</p>
+          <div class="promo-price">${price(p.precio)}</div>
+        </div>`;
+      promosContainer.appendChild(card);
+    });
+
+    if(!hasPromos){
+      promosSection.style.display = "none";
+    }
+  });
+}
+
+/* ================= CATEGORÍAS ================= */
+db.collection("categorias").onSnapshot(snap=>{
+  categoriesDiv.innerHTML="";
+  const order=[
+    "pizzas napolitanas",
+    "pizzas napolitanas gourmet",
+    "pizzas romanas individuales",
+    "focaccias",
+    "paninis",
+    "calzones"
+  ];
+
+  const cats=[];
+  snap.forEach(d=>cats.push(d.data().nombre));
+
+  cats.sort((a,b)=>{
+    const ia=order.indexOf(normalize(a));
+    const ib=order.indexOf(normalize(b));
+    if(ia===-1&&ib===-1) return a.localeCompare(b);
+    if(ia===-1) return 1;
+    if(ib===-1) return -1;
+    return ia-ib;
+  });
+
+  cats.forEach(cat=>{
+    const el=document.createElement("div");
+    el.className="cat";
+    el.innerText=cat;
+    el.onclick=()=>selectCategory(cat,el);
+    categoriesDiv.appendChild(el);
+
+    if(firstLoad && normalize(cat)==="pizzas napolitanas"){
+      el.click();
+      firstLoad=false;
+    }
+  });
+});
+
+/* ================= SELECT CATEGORY ================= */
+function selectCategory(cat,el){
+  currentCategory=cat;
+  document.querySelectorAll(".cat").forEach(c=>c.classList.remove("active"));
+  el.classList.add("active");
+  el.scrollIntoView({behavior:"smooth",inline:"center"});
+  loadProducts();
+}
+
+/* ================= LOAD PRODUCTS ================= */
+function loadProducts(){
+  productsDiv.innerHTML="";
+  loader.style.display="flex";
+  const selected=normalize(currentCategory);
+
+  const render=list=>{
+    let found=false;
+
+    list.forEach(p=>{
+      if(!p.activo) return;
+      if(normalize(p.categoria)!==selected) return;
+
+      found=true;
+
+      const card=document.createElement("div");
+      card.className="card";
+      card.innerHTML=`
+        <img src="${p.imgURL}">
+        <div>
+          <h3>${p.nombre}</h3>
+          <p>${p.descripcion||""}</p>
+          <div class="price">${price(p.precio)}</div>
+        </div>`;
+      productsDiv.appendChild(card);
+    });
+
+    if(!found){
+      productsDiv.innerHTML="<p style='padding:20px;color:#777'>No hay productos</p>";
+    }
+
+    loader.style.display="none";
+  };
+
+  if(productCache.length){
+    render(productCache);
+  }else{
+    db.collection("productos").get().then(snap=>{
+      snap.forEach(d=>productCache.push(d.data()));
+      render(productCache);
+    });
+  }
+}
+
+/* ================= INIT ================= */
+loadPromos();
+</script>
+
+
+</body>
+</html>
